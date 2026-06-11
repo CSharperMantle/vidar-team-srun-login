@@ -1,0 +1,68 @@
+name: Release
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [arm, arm64, amd64]
+        include:
+          - arch: arm
+            docker_platform: linux/arm
+            tag_suffix: arm
+          - arch: arm64
+            docker_platform: linux/arm64
+            tag_suffix: arm64
+          - arch: amd64
+            docker_platform: linux/amd64
+            tag_suffix: amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Get version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >>"$GITHUB_ENV"
+      - name: Build and save Docker image
+        id: build
+        run: |
+          docker buildx build \
+            -t "autologin:${VERSION}-${{ matrix.tag_suffix }}" \
+            --platform "${{ matrix.docker_platform }}" \
+            --output=type=docker .
+          docker save \
+            -o "autologin_${VERSION}-${{ matrix.tag_suffix }}.tar" \
+            "autologin:${VERSION}-${{ matrix.tag_suffix }}"
+          echo "IMAGE_PATH=${GITHUB_WORKSPACE}/autologin_${VERSION}-${{ matrix.tag_suffix }}.tar" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-${{ matrix.arch }}
+          path: ${{ steps.build.outputs.IMAGE_PATH }}
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: docker-image-*
+          merge-multiple: true
+      - name: Get version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >>"$GITHUB_ENV"
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: "autologin*.tar"
+      - uses: actions/attest@v4
+        with:
+          subject-path: "autologin*.tar"
+          push-to-registry: true
