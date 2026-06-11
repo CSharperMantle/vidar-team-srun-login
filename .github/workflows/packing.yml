@@ -5,6 +5,9 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   build-and-upload:
@@ -13,34 +16,35 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Get version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
+      - name: Get version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
       - name: Build and save arm Image
-        shell: bash
+        id: build-arm
         run: |
-          docker buildx build -t autologin:$VERSION-arm --platform linux/arm --output=type=docker .
-          docker save autologin:$VERSION-arm > autologin_$VERSION-arm.tar
-          echo "ARM_IMAGE=autologin_$VERSION-arm.tar" >> $GITHUB_ENV
-
+          docker buildx build -t autologin:${VERSION}-arm --platform linux/arm --output=type=docker .
+          docker save -o autologin_${VERSION}-arm.tar autologin:${VERSION}-arm
+          echo "IMAGE_PATH='$(realpath autologin_${VERSION}-arm.tar)'" >>${GITHUB_OUTPUT}
       - name: Build and save arm64 Image
-        shell: bash
+        id: build-arm64
         run: |
-          docker buildx build -t autologin:$VERSION-arm64 --platform linux/arm64 --output=type=docker .
-          docker save autologin:$VERSION-arm64 > autologin_$VERSION-arm64.tar
-          echo "ARM64_IMAGE=autologin_$VERSION-arm64.tar" >> $GITHUB_ENV
-
+          docker buildx build -t autologin:${VERSION}-arm64 --platform linux/arm64 --output=type=docker .
+          docker save -o autologin_${VERSION}-arm64.tar autologin:${VERSION}-arm64
+          echo "IMAGE_PATH='$(realpath autologin_${VERSION}-arm64.tar)'" >>${GITHUB_OUTPUT}
       - name: Release
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            ${{ env.ARM_IMAGE }}
-            ${{ env.ARM64_IMAGE }}
+            ${{ steps.build-arm.outputs.IMAGE_PATH }}
+            ${{ steps.build-arm64.outputs.IMAGE_PATH }}
+      - name: Attest
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            ${{ steps.build-arm.outputs.IMAGE_PATH }}
+            ${{ steps.build-arm64.outputs.IMAGE_PATH }}
+          push-to-registry: true
